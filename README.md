@@ -49,5 +49,27 @@ homework runner.
 
 
 ## Homework 1 solution: 
-> to students: please fill your solution description here.
+### Chain design
 
+```mermaid
+flowchart LR
+  A[Receipt images] --> B[Vision LLM per image]
+  B --> C[Structured JSON: final_payment, subtotal, discounts]
+  C --> D[Python per-receipt calculation]
+  D --> E[Python sum across receipts]
+  E --> F[Return two HK$ answers]
+```
+
+###Description
+I use deepseek-v4-flash-vision-exp as the vision backbone and LangChain to read
+each supermarket receipt. For every image, the model extracts a structured JSON
+object with final_payment, subtotal, and a list of discounts (all positive
+numbers, rounding excluded). The LLM only parses the receipt; all arithmetic is
+done in Python with Decimal.
+
+Query 1 sums final_payment across receipts.
+Query 2 sums subtotal + sum(discounts) across receipts, without adding back the
+rounding line.
+
+This follows the prompt-chaining idea from Tutorial 1: let the model read, let
+code compute, and validate each intermediate result.
