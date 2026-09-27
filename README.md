@@ -60,7 +60,8 @@ flowchart LR
   E --> F[Return two HK$ answers]
 ```
 
-###Description
+### Description
+
 I use deepseek-v4-flash-vision-exp as the vision backbone and LangChain to read
 each supermarket receipt. For every image, the model extracts a structured JSON
 object with final_payment, subtotal, and a list of discounts (all positive
