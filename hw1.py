@@ -53,34 +53,131 @@ def image_data_url(path: Path) -> str:
 
 
 def build_chain() -> Any:
-    """Create and return your LangChain chain once.
-
-    Suggested imports:
-        from langchain_core.prompts import ChatPromptTemplate
-        from langchain_deepseek import ChatDeepSeek
-
-    Use the vision-capable DeepSeek Flash model named
-    ``deepseek-v4-flash-vision-exp``. The API key is loaded from .env.
-    """
+    """Create and return your LangChain chain once."""
     ### YOUR CODE HERE
-    return None
+    import os
+    from langchain_deepseek import ChatDeepSeek
+
+    llm = ChatDeepSeek(
+        model="deepseek-v4-flash-vision-exp",
+        api_key=os.environ["DEEPSEEK_API_KEY"],
+        temperature=0,
+        max_tokens=8192,
+
+    )
+
+    return {"llm": llm}
 
 
 def answer_queries(chain: Any, images: list[Path]) -> dict[str, Any]:
-    """Run your chain and return one response for each exact query string.
-
-    ``images`` contains every receipt in the selected folder. A valid return
-    value looks like:
-
-        {QUERY_1: "HK$123.40", QUERY_2: "HK$150.00"}
-
-    Use the provided ``image_data_url(path)`` helper to put local images in
-    multimodal human messages. LangChain's ``batch`` method is one simple way
-    to process independent receipt-extraction prompts in parallel.
-    """
+    """Run your chain and return one response for each exact query string."""
     ### YOUR CODE HERE
-    _ = (chain, images)
-    return {QUERY_1: DUMMY_RESPONSE, QUERY_2: DUMMY_RESPONSE}
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    llm = chain["llm"]
+
+    system_text = "You are a precise receipt parser. Output only valid JSON."
+
+    user_text = """Extract from this ONE supermarket receipt image.
+Return ONLY JSON:
+{
+  "final_payment": number or null,
+  "subtotal": number or null,
+  "discounts": [{"label": "string", "amount": positive number}]
+}
+
+Rules:
+- final_payment: the final amount paid after ROUNDING. Usually the last payment line (OCTOPUS, CARD, CASH, etc.). Do NOT use SUBTOTAL.
+- subtotal: the printed SUBTOTAL (after discounts, before rounding).
+- discounts: every discount / promotion / coupon / member / app / packaging-damage / percentage discount line. Output each amount as a POSITIVE number (e.g. -5.39 -> 5.39). Do NOT include ROUNDING.
+- Do NOT sum across receipts. Do NOT compute totals.
+- All amounts are HKD.
+- Output JSON only, no markdown, no explanation.
+"""
+
+    def build_messages(path: Path):
+        return [
+            SystemMessage(content=system_text),
+            HumanMessage(content=[
+                {"type": "text", "text": user_text},
+                {"type": "image_url", "image_url": {"url": image_data_url(path)}},
+            ]),
+        ]
+
+    def response_text(raw: Any) -> str:
+        content = getattr(raw, "content", None)
+        if content is None:
+            content = str(raw)
+        if isinstance(content, list):
+            parts = []
+            for block in content:
+                if isinstance(block, str):
+                    parts.append(block)
+                elif isinstance(block, dict) and isinstance(block.get("text"), str):
+                    parts.append(block["text"])
+            content = "\n".join(parts)
+        if isinstance(content, str) and content.strip():
+            return content
+        # Fallback: if content is empty, try reasoning_content
+        kwargs = getattr(raw, "additional_kwargs", None) or {}
+        reasoning = kwargs.get("reasoning_content")
+        if reasoning:
+            return reasoning
+        return content or ""
+
+    def extract_json(text: str) -> dict:
+        text = text.strip()
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+        # Find the LAST {...} block; handles reasoning text with JSON at end.
+        matches = re.findall(r"\{.*\}", text, flags=re.DOTALL)
+        if not matches:
+            raise ValueError(f"No JSON found in: {text[:500]!r}")
+        # Try from the longest candidate first
+        candidates = sorted(matches, key=len, reverse=True)
+        last_err = None
+        for cand in candidates:
+            try:
+                return json.loads(cand)
+            except Exception as e:
+                last_err = e
+                continue
+        raise ValueError(f"Could not parse JSON. Last error: {last_err}")
+
+    def to_decimal(value: Any) -> Decimal:
+        if value is None:
+            return Decimal("0")
+        if isinstance(value, (int, float)):
+            return Decimal(str(value))
+        s = str(value).replace(",", "")
+        s = re.sub(r"[^0-9.\-]", "", s)
+        return Decimal(s) if s else Decimal("0")
+
+    all_messages = [build_messages(path) for path in images]
+    raw_outputs = llm.batch(all_messages)
+
+    total_paid = Decimal("0")
+    total_without_discount = Decimal("0")
+
+    for raw in raw_outputs:
+        text = response_text(raw)
+        data = extract_json(text)
+
+        final_payment = to_decimal(data.get("final_payment"))
+        subtotal = to_decimal(data.get("subtotal"))
+        discounts = data.get("discounts") or []
+        discount_sum = sum(
+            (to_decimal(d.get("amount")) for d in discounts),
+            Decimal("0"),
+        )
+
+        total_paid += final_payment
+        total_without_discount += subtotal + discount_sum
+
+    return {
+        QUERY_1: f"HK${total_paid:.2f}",
+        QUERY_2: f"HK${total_without_discount:.2f}",
+    }
 
 
 # Everything below is provided runner/scoring code. No edits are needed.
