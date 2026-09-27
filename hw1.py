@@ -125,6 +125,8 @@ Rules:
             return reasoning
         return content or ""
 
+
+
     def extract_json(text: str) -> dict:
         text = text.strip()
         text = re.sub(r"^```(?:json)?\s*", "", text)
@@ -161,6 +163,9 @@ Rules:
 
     for raw in raw_outputs:
         text = response_text(raw)
+        print("========== TEXT ==========")
+        print(text)
+        print("==========================")
         data = extract_json(text)
 
         final_payment = to_decimal(data.get("final_payment"))
